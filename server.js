@@ -1,62 +1,80 @@
-var express = require("express");
-var mongo = require("mongodb").MongoClient;
-var validUrl = require("valid-url");
-var shortId = require("shortid");
-var port = process.env.PORT || 8080;
-var dbUrl = 'mongodb://amk:W4UY|c-_hyJc7nJ@ds013222.mlab.com:13222/shorten_url';
-var app = express();
-app.use('/',express.static('public'));
-app.get('/new/:url(*)',function(req,res){
-    var url = req.params.url;
-    if(validUrl.isUri(url)){
-        mongo.connect(dbUrl,function(err,db){
-            if(err){
-                res.end('Wait, what?');
-                return console.log(err);
-            } else {
-                var urlList = db.collection('urlList');
-                var short = shortId.generate();
-                urlList.insert([{url: url, short: short}],function(){
-                    var data = {
-                        original_url: url,
-                        short_url: 'http://'+req.headers['host']+'/'+short
-                    }
-                    db.close();
-                    res.send(data);
-                });
-            }
-        });
+'use strict';
+
+const express = require('express');
+const mongo = require('mongodb');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+
+const urlShort = require('./bin/validate');
+const app = express();
+
+const { URL } = require('url');
+
+const urlDB = process.env.MONGO_URI;
+
+const urlSave = require('./model/db');
+
+
+
+ 
+mongoose.connect(urlDB,{ useNewUrlParser: true });
+
+
+var port = process.env.PORT || 3000;
+
+app.use(cors());
+
+
+app.use('/', (req, res, next) => {
+  console.log(`${req.method}, ${req.path} - ${req.ip}`);
+  next();
+});
+app.use(bodyParser.urlencoded({extended: false}));
+app.use('/public', express.static(process.cwd() + '/public'));
+
+
+app.get('/api/shorturl/all', (req,res) => {
+  urlSave.findAll(req, res);
+});
+app.get('/api/shorturl/:url', (req, res) => {
+  urlSave.getLongUrl(req.params.url, function(err, data) {
+    if (err) {
+      res.send('ERROR');
     } else {
-        var data = {
-            error:'Haha, no'
-        }
-        res.json(data);
+      res.redirect(data);
     }
+  });
 });
-app.get('/:id',function(req,res){
-  var id = req.params.id;
-  mongo.connect(dbUrl,function(err,db){
-      if(err){
-          return console.log(err);
-      } else {
-          var urlList = db.collection('urlList');
-          urlList.find({short:id}).toArray(function(err,docs){
-              if(err){
-                  res.end('Why would you even')
-                  return console.log('read',err);
-              } else {
-                    if(docs.length>0){
-                        db.close();
-                        res.redirect(docs[0].url);
-                    } else {
-                        db.close();
-                        res.end('No. Just no')
-                    }
-              }
-          })
-      }
-  })
+
+
+app.post('/api/shorturl/new', function (req, res) {
+  const newLongUrl = req.body.url;
+  urlShort.validateUrl(newLongUrl, function (err, url) {
+    if (err) {
+      console.error("Error: Url didn't validate:");
+      console.error(err);      
+      res.json({error: 'invalid url'});      
+    } else {      
+      urlSave.createNew(url, function(err, shortUrl) {
+        if (err) {
+          console.error('Error: fail with database');
+          console.error(err);
+          res.send('Error with database.');
+        } else {
+          res.json({original_url: url, short_url: shortUrl});
+        }
+      });
+    }
+  });
 });
-app.listen(port,function(){
-    console.log('Thats cool');
-})
+app.get('/', function(req, res){
+  res.sendFile(process.cwd() + '/views/index.html');
+});
+
+
+
+
+app.listen(port, function () {
+  console.log('Node.js listening ...');
+});
